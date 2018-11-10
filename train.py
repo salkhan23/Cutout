@@ -1,3 +1,7 @@
+# ----------------------------------------------------------------------------------------------------
+# Reference https://github.com/uoguelph-mlrg/Cutout
+# ----------------------------------------------------------------------------------------------------
+
 # run train.py --dataset cifar10 --model resnet18 --data_augmentation --cutout --length 16
 # run train.py --dataset cifar100 --model resnet18 --data_augmentation --cutout --length 8
 # run train.py --dataset svhn --model wideresnet --learning_rate 0.01 --epochs 160 --cutout --length 20
@@ -6,6 +10,10 @@ import pdb
 import argparse
 import numpy as np
 from tqdm import tqdm
+import pickle
+from sklearn.model_selection import train_test_split
+import os
+from PIL import Image
 
 import torch
 import torch.nn as nn
@@ -15,6 +23,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 
 from torchvision.utils import make_grid
 from torchvision import datasets, transforms
+from torch.utils.data.dataset import Dataset
 
 from util.misc import CSVLogger
 from util.cutout import Cutout
@@ -25,6 +34,14 @@ from model.wide_resnet import WideResNet
 model_options = ['resnet18', 'wideresnet']
 dataset_options = ['cifar10', 'cifar100', 'svhn']
 
+
+RESULTS_DIR = './results'
+if not os.path.exists(RESULTS_DIR):
+    os.mkdir(RESULTS_DIR)
+
+# --------------------------------------------------------------------------------------------
+# Process Input Arguments
+# --------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description='CNN')
 parser.add_argument('--dataset', '-d', default='cifar10',
                     choices=dataset_options)
@@ -59,30 +76,101 @@ if args.cuda:
 
 test_id = args.dataset + '_' + args.model
 
-print(args)
+# print the input arguments:
+for k, v in args.__dict__.items():
+    print("{}: {}".format(k, v))
 
-# Image Preprocessing
+
+# ---------------------------------------------------------------------------------------
+# Custom Dataset Loading
+# ---------------------------------------------------------------------------------------
+class Stat946DataSet(Dataset):
+
+    def __init__(self, x_data, y_labels, preprocessing=None):
+        self.data = x_data
+        self.labels = y_labels
+        self.count = x_data.shape[0]
+        self.preprocessing = preprocessing
+
+    def __getitem__(self, index):
+
+        img = self.data[index, ]
+        img = Image.fromarray(img)
+
+        if self.preprocessing is not None:
+            img = self.preprocessing(img)
+
+        return img, self.labels[index]
+
+    def __len__(self):
+        return self.count  # of how many examples(images?) you have
+
+
+def get_stat_946_datasets(validation_data_split, train_preprocessing, test_preprocessing):
+
+    base_dir = "./data/stat_946_data"
+
+    if not os.path.exists(base_dir):
+        raise Exception("Cannot find STAT 946 Data Files. Download files and place @ {}".format(base_dir))
+
+    with open(os.path.join(base_dir, 'train_data'), 'rb') as f:
+        train_data = pickle.load(f, encoding='bytes')
+        train_label = pickle.load(f, encoding='bytes')
+
+    with open(os.path.join(base_dir, 'test_data'), 'rb') as f:
+        test_data = pickle.load(f, encoding='bytes')
+
+    # Put data in correct format
+    train_data = train_data.reshape((train_data.shape[0], 3, 32, 32))
+    train_data = train_data.transpose(0, 2, 3, 1)
+    x_train, x_validation, y_train, y_validation = \
+        train_test_split(train_data, train_label, test_size=validation_data_split, random_state=args.seed)
+
+    test_data = test_data.reshape((test_data.shape[0], 3, 32, 32))
+    test_data = test_data.transpose(0, 2, 3, 1)
+    x_test = test_data
+
+    # Now Create PyTorch Data Sets
+    train_ds = Stat946DataSet(x_train, y_train, train_preprocessing)
+    validation_ds = Stat946DataSet(x_validation, y_validation, test_preprocessing)
+
+    # TODO: Preprocessing the test data
+
+    return train_ds, validation_ds, x_test
+
+
+# ---------------------------------------------------------------------------------------
+# Image Pre-processing
+# ---------------------------------------------------------------------------------------
 if args.dataset == 'svhn':
-    normalize = transforms.Normalize(mean=[x / 255.0 for x in[109.9, 109.7, 113.8]],
-                                     std=[x / 255.0 for x in [50.1, 50.6, 50.8]])
+    normalize = transforms.Normalize(
+        mean=[x / 255.0 for x in[109.9, 109.7, 113.8]],
+        std=[x / 255.0 for x in [50.1, 50.6, 50.8]]
+    )
 else:
-    normalize = transforms.Normalize(mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
-                                     std=[x / 255.0 for x in [63.0, 62.1, 66.7]])
+    normalize = transforms.Normalize(
+        mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
+        std=[x / 255.0 for x in [63.0, 62.1, 66.7]]
+    )
 
 train_transform = transforms.Compose([])
+
 if args.data_augmentation:
     train_transform.transforms.append(transforms.RandomCrop(32, padding=4))
     train_transform.transforms.append(transforms.RandomHorizontalFlip())
 train_transform.transforms.append(transforms.ToTensor())
 train_transform.transforms.append(normalize)
+
 if args.cutout:
     train_transform.transforms.append(Cutout(n_holes=args.n_holes, length=args.length))
-
 
 test_transform = transforms.Compose([
     transforms.ToTensor(),
     normalize])
 
+# ---------------------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------------------
 if args.dataset == 'cifar10':
     num_classes = 10
     train_dataset = datasets.CIFAR10(root='data/',
@@ -96,15 +184,18 @@ if args.dataset == 'cifar10':
                                     download=True)
 elif args.dataset == 'cifar100':
     num_classes = 100
-    train_dataset = datasets.CIFAR100(root='data/',
-                                      train=True,
-                                      transform=train_transform,
-                                      download=True)
+    # train_dataset = datasets.CIFAR100(root='data/',
+    #                                   train=True,
+    #                                   transform=train_transform,
+    #                                   download=True)
+    #
+    # test_dataset = datasets.CIFAR100(root='data/',
+    #                                  train=False,
+    #                                  transform=test_transform,
+    #                                  download=True)
 
-    test_dataset = datasets.CIFAR100(root='data/',
-                                     train=False,
-                                     transform=test_transform,
-                                     download=True)
+    train_dataset, validation_dataset, test_dataset = get_stat_946_datasets(0.05, train_transform, test_transform)
+
 elif args.dataset == 'svhn':
     num_classes = 10
     train_dataset = datasets.SVHN(root='data/',
@@ -135,7 +226,7 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                            pin_memory=True,
                                            num_workers=2)
 
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+validation_loader = torch.utils.data.DataLoader(dataset=validation_dataset,
                                           batch_size=args.batch_size,
                                           shuffle=False,
                                           pin_memory=True,
@@ -161,7 +252,7 @@ if args.dataset == 'svhn':
 else:
     scheduler = MultiStepLR(cnn_optimizer, milestones=[60, 120, 160], gamma=0.2)
 
-filename = 'logs/' + test_id + '.csv'
+filename = RESULTS_DIR + test_id + '.csv'
 csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'test_acc'], filename=filename)
 
 
@@ -192,6 +283,7 @@ for epoch in range(args.epochs):
     total = 0.
 
     progress_bar = tqdm(train_loader)
+
     for i, (images, labels) in enumerate(progress_bar):
         progress_bar.set_description('Epoch ' + str(epoch))
 
@@ -217,7 +309,7 @@ for epoch in range(args.epochs):
             xentropy='%.3f' % (xentropy_loss_avg / (i + 1)),
             acc='%.3f' % accuracy)
 
-    test_acc = test(test_loader)
+    test_acc = test(validation_loader)
     tqdm.write('test_acc: %.3f' % (test_acc))
 
     scheduler.step(epoch)
