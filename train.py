@@ -84,7 +84,7 @@ for k, v in args.__dict__.items():
 # ---------------------------------------------------------------------------------------
 # Custom Dataset Loading
 # ---------------------------------------------------------------------------------------
-class Stat946DataSet(Dataset):
+class Stat946TrainDataSet(Dataset):
 
     def __init__(self, x_data, y_labels, preprocessing=None):
         self.data = x_data
@@ -101,6 +101,28 @@ class Stat946DataSet(Dataset):
             img = self.preprocessing(img)
 
         return img, self.labels[index]
+
+    def __len__(self):
+        return self.count  # of how many examples(images?) you have
+
+
+class Stat946TestDataSet(Dataset):
+    """ No Labels """
+
+    def __init__(self, x_data, preprocessing=None):
+        self.data = x_data
+        self.count = x_data.shape[0]
+        self.preprocessing = preprocessing
+
+    def __getitem__(self, index):
+
+        img = self.data[index, ]
+        img = Image.fromarray(img)
+
+        if self.preprocessing is not None:
+            img = self.preprocessing(img)
+
+        return img
 
     def __len__(self):
         return self.count  # of how many examples(images?) you have
@@ -131,12 +153,11 @@ def get_stat_946_datasets(validation_data_split, train_preprocessing, test_prepr
     x_test = test_data
 
     # Now Create PyTorch Data Sets
-    train_ds = Stat946DataSet(x_train, y_train, train_preprocessing)
-    validation_ds = Stat946DataSet(x_validation, y_validation, test_preprocessing)
+    train_ds = Stat946TrainDataSet(x_train, y_train, train_preprocessing)
+    validation_ds = Stat946TrainDataSet(x_validation, y_validation, test_preprocessing)
+    test_ds = Stat946TrainDataSet(x_test, test_preprocessing)
 
-    # TODO: Preprocessing the test data
-
-    return train_ds, validation_ds, x_test
+    return train_ds, validation_ds, test_ds
 
 
 # ---------------------------------------------------------------------------------------
@@ -232,6 +253,14 @@ validation_loader = torch.utils.data.DataLoader(dataset=validation_dataset,
                                           pin_memory=True,
                                           num_workers=2)
 
+test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+                                          shuffle=False,
+                                          pin_memory=True,
+                                          num_workers=2)
+
+# ---------------------------------------------------------------------------------------
+# Choose the Model
+# ---------------------------------------------------------------------------------------
 if args.model == 'resnet18':
     cnn = ResNet18(num_classes=num_classes)
 elif args.model == 'wideresnet':
@@ -252,8 +281,9 @@ if args.dataset == 'svhn':
 else:
     scheduler = MultiStepLR(cnn_optimizer, milestones=[60, 120, 160], gamma=0.2)
 
-filename = RESULTS_DIR + test_id + '.csv'
-csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'test_acc'], filename=filename)
+
+training_summary_file = os.path.join(RESULTS_DIR, test_id + '_training_summary.csv')
+csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'test_acc'], filename=training_summary_file)
 
 
 def test(loader):
@@ -317,5 +347,11 @@ for epoch in range(args.epochs):
     row = {'epoch': str(epoch), 'train_acc': str(accuracy), 'test_acc': str(test_acc)}
     csv_logger.writerow(row)
 
-torch.save(cnn.state_dict(), 'checkpoints/' + test_id + '.pt')
+
+model_weights_file = os.path.join(RESULTS_DIR, test_id + '_weights.pt')
+torch.save(cnn.state_dict(), model_weights_file)
 csv_logger.close()
+
+# ---------------------------------------------------------------------------------------------
+# Evaluate The test Data
+# ---------------------------------------------------------------------------------------------
