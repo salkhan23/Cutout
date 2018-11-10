@@ -35,9 +35,9 @@ model_options = ['resnet18', 'wideresnet']
 dataset_options = ['cifar10', 'cifar100', 'svhn']
 
 
-RESULTS_DIR = './results'
-if not os.path.exists(RESULTS_DIR):
-    os.mkdir(RESULTS_DIR)
+BASE_RESULTS_DIR = './results'
+if not os.path.exists(BASE_RESULTS_DIR):
+    os.mkdir(BASE_RESULTS_DIR)
 
 # --------------------------------------------------------------------------------------------
 # Process Input Arguments
@@ -74,12 +74,20 @@ torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
-test_id = args.dataset + '_' + args.model
-
 # print the input arguments:
 for k, v in args.__dict__.items():
     print("{}: {}".format(k, v))
 
+# Initialization  -------------------------------------------------
+test_id = args.dataset + '_' + args.model
+
+results_dir = os.path.join(BASE_RESULTS_DIR, test_id)
+if not os.path.exists(results_dir):
+    os.mkdir(results_dir)
+
+training_summary_file = os.path.join(results_dir, 'training_summary.csv')
+model_weights_file = os.path.join(results_dir, 'weights.pt')
+predictions_file = os.path.join(results_dir, 'predictions.csv')
 
 # ---------------------------------------------------------------------------------------
 # Custom Dataset Loading
@@ -155,7 +163,7 @@ def get_stat_946_datasets(validation_data_split, train_preprocessing, test_prepr
     # Now Create PyTorch Data Sets
     train_ds = Stat946TrainDataSet(x_train, y_train, train_preprocessing)
     validation_ds = Stat946TrainDataSet(x_validation, y_validation, test_preprocessing)
-    test_ds = Stat946TrainDataSet(x_test, test_preprocessing)
+    test_ds = Stat946TestDataSet(x_test, test_preprocessing)
 
     return train_ds, validation_ds, test_ds
 
@@ -282,11 +290,10 @@ else:
     scheduler = MultiStepLR(cnn_optimizer, milestones=[60, 120, 160], gamma=0.2)
 
 
-training_summary_file = os.path.join(RESULTS_DIR, test_id + '_training_summary.csv')
 csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'test_acc'], filename=training_summary_file)
 
 
-def test(loader):
+def validation_error(loader):
     cnn.eval()    # Change model to 'eval' mode (BN uses moving mean/var).
     correct = 0.
     total = 0.
@@ -339,7 +346,7 @@ for epoch in range(args.epochs):
             xentropy='%.3f' % (xentropy_loss_avg / (i + 1)),
             acc='%.3f' % accuracy)
 
-    test_acc = test(validation_loader)
+    test_acc = validation_error(validation_loader)
     tqdm.write('test_acc: %.3f' % (test_acc))
 
     scheduler.step(epoch)
@@ -347,11 +354,26 @@ for epoch in range(args.epochs):
     row = {'epoch': str(epoch), 'train_acc': str(accuracy), 'test_acc': str(test_acc)}
     csv_logger.writerow(row)
 
-
-model_weights_file = os.path.join(RESULTS_DIR, test_id + '_weights.pt')
 torch.save(cnn.state_dict(), model_weights_file)
 csv_logger.close()
 
 # ---------------------------------------------------------------------------------------------
 # Evaluate The test Data
 # ---------------------------------------------------------------------------------------------
+print("Evaluating Test Data ...")
+predictions_csv_logger = CSVLogger(
+    args=args, fieldnames=['ids', 'labels'], filename=predictions_file)
+
+cnn.eval()  # Change model to 'eval' mode (BN uses moving mean/var).
+for idx, test_image in enumerate(test_loader):
+
+    test_image = test_image.cuda()
+
+    with torch.no_grad():
+        pred = cnn(test_image)
+        max_pred = torch.max(pred, 1)[1]
+
+        row ={'ids': str(idx), 'labels': str(np.int(max_pred))}
+        predictions_csv_logger.writerow(row)
+
+predictions_csv_logger.close()
