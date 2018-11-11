@@ -16,6 +16,7 @@ from sklearn.model_selection import train_test_split
 import os
 from PIL import Image
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -32,8 +33,9 @@ from util.cutout import Cutout
 
 from model.resnet import ResNet18
 from model.wide_resnet import WideResNet
+from model.densenet import DenseNet3
 
-model_options = ['resnet18', 'wideresnet']
+model_options = ['resnet18', 'wideresnet', 'densenet']
 dataset_options = ['cifar100']
 
 
@@ -243,15 +245,14 @@ test_loader = torch.utils.data.DataLoader(
 # ---------------------------------------------------------------------------------------
 # Choose the Model
 # ---------------------------------------------------------------------------------------
+print("Configuring  Model {}".format('*'*80))
 if args.model == 'resnet18':
     cnn = ResNet18(num_classes=num_classes)
 elif args.model == 'wideresnet':
-    if args.dataset == 'svhn':
-        cnn = WideResNet(depth=16, num_classes=num_classes, widen_factor=8,
-                         dropRate=0.4)
-    else:
-        cnn = WideResNet(depth=28, num_classes=num_classes, widen_factor=10,
-                         dropRate=0.3)
+    cnn = WideResNet(depth=28, num_classes=num_classes, widen_factor=10, dropRate=0.3)
+elif args.model == 'densenet':
+    cnn = DenseNet3(depth=40, num_classes=num_classes, growth_rate=40, bottleneck=False, dropRate=0)
+
 
 cnn = cnn.cuda()
 criterion = nn.CrossEntropyLoss().cuda()
@@ -265,6 +266,10 @@ else:
 
 
 csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'val_acc'], filename=training_summary_file)
+
+# get the number of model parameters
+num_params = sum([p.data.nelement() for p in cnn.parameters()])
+print("Model {} selected. Number of Parameters {}".format(args.model, num_params))
 
 # ---------------------------------------------------------------------------------------
 # Training
@@ -297,6 +302,10 @@ def validation_error(loader):
     cnn.train()
     return val_acc
 
+
+acc_val = np.zeros(args.epochs)
+acc_train = np.zeros(args.epochs)
+loss_train = np.zeros(args.epochs)
 
 for epoch in range(args.epochs):
 
@@ -342,9 +351,27 @@ for epoch in range(args.epochs):
     row = {'epoch': str(epoch), 'train_acc': str(accuracy), 'val_acc': str(val_acc)}
     csv_logger.writerow(row)
 
+    acc_train[epoch] = accuracy
+    acc_val[epoch] = val_acc
+    loss_train[epoch] = xentropy_loss_avg
+
 torch.save(cnn.state_dict(), model_weights_file)
 csv_logger.close()
 print("Training took {}".format(datetime.now() - start_time))
+
+# Plot Accuracies/losses
+f, ax_arr = plt.subplots(1, 2)
+ax_arr[0].plot(np.arange(args.epochs), loss_train / i, label='train', color='b')
+ax_arr[0].set_xlabel("Epoch")
+ax_arr[0].set_ylabel("Loss")
+
+ax_arr[1].plot(np.arange(args.epochs), acc_train, label='train', color='b')
+ax_arr[1].plot(np.arange(args.epochs), acc_val, label='validation', color='r')
+ax_arr[1].set_xlabel("Epoch")
+ax_arr[1].set_ylabel("Accuracy")
+ax_arr[1].legend()
+
+f.savefig(os.path.join(results_dir, 'training_plots.eps'))
 
 # ---------------------------------------------------------------------------------------------
 # Evaluate The test Data
