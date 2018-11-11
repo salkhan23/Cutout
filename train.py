@@ -1,5 +1,6 @@
 # ----------------------------------------------------------------------------------------------------
 # Reference https://github.com/uoguelph-mlrg/Cutout
+# Modified for the Stat946 Data Challenge
 # ----------------------------------------------------------------------------------------------------
 
 # run train.py --dataset cifar10 --model resnet18 --data_augmentation --cutout --length 16
@@ -14,6 +15,7 @@ import pickle
 from sklearn.model_selection import train_test_split
 import os
 from PIL import Image
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -32,7 +34,7 @@ from model.resnet import ResNet18
 from model.wide_resnet import WideResNet
 
 model_options = ['resnet18', 'wideresnet']
-dataset_options = ['cifar10', 'cifar100', 'svhn']
+dataset_options = ['cifar100']
 
 
 BASE_RESULTS_DIR = './results'
@@ -88,6 +90,7 @@ if not os.path.exists(results_dir):
 training_summary_file = os.path.join(results_dir, 'training_summary.csv')
 model_weights_file = os.path.join(results_dir, 'weights.pt')
 predictions_file = os.path.join(results_dir, 'predictions.csv')
+
 
 # ---------------------------------------------------------------------------------------
 # Custom Dataset Loading
@@ -200,71 +203,42 @@ test_transform = transforms.Compose([
 # ---------------------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------------------
-if args.dataset == 'cifar10':
-    num_classes = 10
-    train_dataset = datasets.CIFAR10(root='data/',
-                                     train=True,
-                                     transform=train_transform,
-                                     download=True)
+train_validation_split = 0.05
 
-    test_dataset = datasets.CIFAR10(root='data/',
-                                    train=False,
-                                    transform=test_transform,
-                                    download=True)
-elif args.dataset == 'cifar100':
-    num_classes = 100
-    # train_dataset = datasets.CIFAR100(root='data/',
-    #                                   train=True,
-    #                                   transform=train_transform,
-    #                                   download=True)
-    #
-    # test_dataset = datasets.CIFAR100(root='data/',
-    #                                  train=False,
-    #                                  transform=test_transform,
-    #                                  download=True)
+num_classes = 100
+# train_dataset = datasets.CIFAR100(root='data/',
+#                                   train=True,
+#                                   transform=train_transform,
+#                                   download=True)
+#
+# test_dataset = datasets.CIFAR100(root='data/',
+#                                  train=False,
+#                                  transform=test_transform,
+#                                  download=True)
 
-    train_dataset, validation_dataset, test_dataset = get_stat_946_datasets(0.05, train_transform, test_transform)
-
-elif args.dataset == 'svhn':
-    num_classes = 10
-    train_dataset = datasets.SVHN(root='data/',
-                                  split='train',
-                                  transform=train_transform,
-                                  download=True)
-
-    extra_dataset = datasets.SVHN(root='data/',
-                                  split='extra',
-                                  transform=train_transform,
-                                  download=True)
-
-    # Combine both training splits (https://arxiv.org/pdf/1605.07146.pdf)
-    data = np.concatenate([train_dataset.data, extra_dataset.data], axis=0)
-    labels = np.concatenate([train_dataset.labels, extra_dataset.labels], axis=0)
-    train_dataset.data = data
-    train_dataset.labels = labels
-
-    test_dataset = datasets.SVHN(root='data/',
-                                 split='test',
-                                 transform=test_transform,
-                                 download=True)
+train_dataset, validation_dataset, test_dataset = get_stat_946_datasets(
+    train_validation_split, train_transform, test_transform)
 
 # Data Loader (Input Pipeline)
-train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=args.batch_size,
-                                           shuffle=True,
-                                           pin_memory=True,
-                                           num_workers=2)
+train_loader = torch.utils.data.DataLoader(
+    dataset=train_dataset,
+    batch_size=args.batch_size,
+    shuffle=True,
+    pin_memory=True,
+    num_workers=2)
 
-validation_loader = torch.utils.data.DataLoader(dataset=validation_dataset,
-                                          batch_size=args.batch_size,
-                                          shuffle=False,
-                                          pin_memory=True,
-                                          num_workers=2)
+validation_loader = torch.utils.data.DataLoader(
+    dataset=validation_dataset,
+    batch_size=args.batch_size,
+    shuffle=False,
+    pin_memory=True,
+    num_workers=2)
 
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                          shuffle=False,
-                                          pin_memory=True,
-                                          num_workers=2)
+test_loader = torch.utils.data.DataLoader(
+    dataset=test_dataset,
+    shuffle=False,
+    pin_memory=True,
+    num_workers=2)
 
 # ---------------------------------------------------------------------------------------
 # Choose the Model
@@ -291,6 +265,17 @@ else:
 
 
 csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'test_acc'], filename=training_summary_file)
+
+# ---------------------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------------------
+print("Training Started {}".format('*'*80))
+print("Train/Validation Split={}. (nTrain {}, nValidation {})".format(
+    train_validation_split,
+    train_dataset.__len__(),
+    validation_dataset.__len__()))
+
+start_time = datetime.now()
 
 
 def validation_error(loader):
@@ -347,7 +332,7 @@ for epoch in range(args.epochs):
             acc='%.3f' % accuracy)
 
     test_acc = validation_error(validation_loader)
-    tqdm.write('test_acc: %.3f' % (test_acc))
+    tqdm.write('test_acc: %.3f' % test_acc)
 
     scheduler.step(epoch)
 
@@ -356,13 +341,13 @@ for epoch in range(args.epochs):
 
 torch.save(cnn.state_dict(), model_weights_file)
 csv_logger.close()
+print("Training took {}".format(datetime.now() - start_time))
 
 # ---------------------------------------------------------------------------------------------
 # Evaluate The test Data
 # ---------------------------------------------------------------------------------------------
-print("Evaluating Test Data ...")
-predictions_csv_logger = CSVLogger(
-    args=args, fieldnames=['ids', 'labels'], filename=predictions_file)
+print("Evaluating Test Data {}".format('*'*80))
+predictions_csv_logger = CSVLogger(fieldnames=['ids', 'labels'], filename=predictions_file)
 
 cnn.eval()  # Change model to 'eval' mode (BN uses moving mean/var).
 for idx, test_image in enumerate(test_loader):
@@ -373,7 +358,7 @@ for idx, test_image in enumerate(test_loader):
         pred = cnn(test_image)
         max_pred = torch.max(pred, 1)[1]
 
-        row ={'ids': str(idx), 'labels': str(np.int(max_pred))}
+        row = {'ids': str(idx), 'labels': str(np.int(max_pred))}
         predictions_csv_logger.writerow(row)
 
 predictions_csv_logger.close()
