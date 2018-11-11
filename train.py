@@ -264,7 +264,7 @@ else:
     scheduler = MultiStepLR(cnn_optimizer, milestones=[60, 120, 160], gamma=0.2)
 
 
-csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'test_acc'], filename=training_summary_file)
+csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'val_acc'], filename=training_summary_file)
 
 # ---------------------------------------------------------------------------------------
 # Training
@@ -331,12 +331,15 @@ for epoch in range(args.epochs):
             xentropy='%.3f' % (xentropy_loss_avg / (i + 1)),
             acc='%.3f' % accuracy)
 
-    test_acc = validation_error(validation_loader)
-    tqdm.write('test_acc: %.3f' % test_acc)
+    if validation_loader.dataset.count > 0:
+        val_acc = validation_error(validation_loader)
+        tqdm.write('test_acc: %.3f' % val_acc)
+    else:
+        val_acc = 0
 
     scheduler.step(epoch)
 
-    row = {'epoch': str(epoch), 'train_acc': str(accuracy), 'test_acc': str(test_acc)}
+    row = {'epoch': str(epoch), 'train_acc': str(accuracy), 'val_acc': str(val_acc)}
     csv_logger.writerow(row)
 
 torch.save(cnn.state_dict(), model_weights_file)
