@@ -7,7 +7,6 @@
 # run train.py --dataset cifar100 --model resnet18 --data_augmentation --cutout --length 8
 # run train.py --dataset svhn --model wideresnet --learning_rate 0.01 --epochs 160 --cutout --length 20
 
-import pdb
 import argparse
 import numpy as np
 from tqdm import tqdm
@@ -20,11 +19,9 @@ import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 from torch.optim.lr_scheduler import MultiStepLR
 
-from torchvision.utils import make_grid
 from torchvision import datasets, transforms
 from torch.utils.data.dataset import Dataset
 
@@ -69,6 +66,8 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='enables CUDA training')
 parser.add_argument('--seed', type=int, default=0,
                     help='random seed (default: 1)')
+parser.add_argument('--train_validation_split', type=float, default=0.05,
+                    help='split training data into train and validation set. Must be between (0, 1]')
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -176,16 +175,9 @@ def get_stat_946_datasets(validation_data_split, train_preprocessing, test_prepr
 # ---------------------------------------------------------------------------------------
 # Image Pre-processing
 # ---------------------------------------------------------------------------------------
-if args.dataset == 'svhn':
-    normalize = transforms.Normalize(
-        mean=[x / 255.0 for x in[109.9, 109.7, 113.8]],
-        std=[x / 255.0 for x in [50.1, 50.6, 50.8]]
-    )
-else:
-    normalize = transforms.Normalize(
-        mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
-        std=[x / 255.0 for x in [63.0, 62.1, 66.7]]
-    )
+normalize = transforms.Normalize(
+    mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
+    std=[x / 255.0 for x in [63.0, 62.1, 66.7]])
 
 train_transform = transforms.Compose([])
 
@@ -205,8 +197,6 @@ test_transform = transforms.Compose([
 # ---------------------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------------------
-train_validation_split = 0.05
-
 num_classes = 100
 # train_dataset = datasets.CIFAR100(root='data/',
 #                                   train=True,
@@ -219,7 +209,7 @@ num_classes = 100
 #                                  download=True)
 
 train_dataset, validation_dataset, test_dataset = get_stat_946_datasets(
-    train_validation_split, train_transform, test_transform)
+    args.train_validation_split, train_transform, test_transform)
 
 # Data Loader (Input Pipeline)
 train_loader = torch.utils.data.DataLoader(
@@ -251,8 +241,7 @@ if args.model == 'resnet18':
 elif args.model == 'wideresnet':
     cnn = WideResNet(depth=28, num_classes=num_classes, widen_factor=10, dropRate=0.3)
 elif args.model == 'densenet':
-    cnn = DenseNet3(depth=40, num_classes=num_classes, growth_rate=40, bottleneck=False, dropRate=0)
-
+    cnn = DenseNet3(depth=100, num_classes=num_classes, growth_rate=12, bottleneck=False, dropRate=0)
 
 cnn = cnn.cuda()
 criterion = nn.CrossEntropyLoss().cuda()
@@ -276,7 +265,7 @@ print("Model {} selected. Number of Parameters {}".format(args.model, num_params
 # ---------------------------------------------------------------------------------------
 print("Training Started {}".format('*'*80))
 print("Train/Validation Split={}. (nTrain {}, nValidation {})".format(
-    train_validation_split,
+    args.train_validation_split,
     train_dataset.__len__(),
     validation_dataset.__len__()))
 
@@ -360,7 +349,7 @@ csv_logger.close()
 print("Training took {}".format(datetime.now() - start_time))
 
 # Plot Accuracies/losses
-f, ax_arr = plt.subplots(1, 2)
+fig, ax_arr = plt.subplots(1, 2)
 ax_arr[0].plot(np.arange(args.epochs), loss_train / i, label='train', color='b')
 ax_arr[0].set_xlabel("Epoch")
 ax_arr[0].set_ylabel("Loss")
@@ -371,7 +360,7 @@ ax_arr[1].set_xlabel("Epoch")
 ax_arr[1].set_ylabel("Accuracy")
 ax_arr[1].legend()
 
-f.savefig(os.path.join(results_dir, 'training_plots.eps'))
+fig.savefig(os.path.join(results_dir, 'training_plots.eps'))
 
 # ---------------------------------------------------------------------------------------------
 # Evaluate The test Data
